@@ -40,8 +40,6 @@ def to_document(row: dict) -> Document:
         "Arabic:",
         arabic_text,
     ]
-    if diacritized_text and diacritized_text != arabic_text:
-        lines.extend(["", "Arabic (diacritized):", diacritized_text])
     if english_text:
         lines.extend(["", "English:", english_text])
 

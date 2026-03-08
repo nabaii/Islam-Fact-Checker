@@ -1,26 +1,25 @@
+import json
 import os
 from pathlib import Path
 
+from dotenv import load_dotenv
 from langchain_community.vectorstores import FAISS
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_openai import ChatOpenAI
 
 try:
     from langchain_huggingface import HuggingFaceEmbeddings
 except ImportError:
     from langchain_community.embeddings import HuggingFaceEmbeddings
 
-try:
-    from langchain_ollama import ChatOllama
-except ImportError:
-    from langchain_community.chat_models import ChatOllama
-
 from langchain_classic.chains import create_retrieval_chain
 from langchain_classic.chains.combine_documents import create_stuff_documents_chain
 
+load_dotenv(Path(__file__).resolve().parent / "global.env")
+
 EMBEDDING_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 VECTORSTORE_DIR = Path(__file__).resolve().parent / "quran_vectorstore"
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2")
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
 SYSTEM_PROMPT = """
 You are an evidence-based Islamic fact-checking assistant.
@@ -30,10 +29,19 @@ Do NOT invent verses.
 If insufficient evidence, say "Not supported by provided evidence".
 If interpretation is required, say "Interpretation required".
 
+For every quoted verse, include BOTH the Arabic text and an English translation.
+If the context only has Arabic, provide a widely accepted English translation yourself.
+
 Return answer as valid JSON with this exact schema:
 {{
   "verdict": "",
-  "quoted_verses": [],
+  "quoted_verses": [
+    {{
+      "reference": "Surah X:Y",
+      "arabic": "",
+      "english": ""
+    }}
+  ],
   "explanation": "",
   "confidence": ""
 }}
@@ -47,6 +55,10 @@ def build_chain():
     if not VECTORSTORE_DIR.exists():
         raise FileNotFoundError(
             f"Vector store not found at {VECTORSTORE_DIR}. Run ingestion.py first."
+        )
+    if not os.getenv("OPENAI_API_KEY"):
+        raise EnvironmentError(
+            "OPENAI_API_KEY is not set. Set it in your current terminal and retry."
         )
 
     embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
@@ -65,11 +77,7 @@ def build_chain():
         ]
     )
 
-    llm = ChatOllama(
-        model=OLLAMA_MODEL,
-        base_url=OLLAMA_BASE_URL,
-        temperature=0,
-    )
+    llm = ChatOpenAI(model=OPENAI_MODEL, temperature=0)
     qa_chain = create_stuff_documents_chain(llm, prompt)
     return create_retrieval_chain(retriever, qa_chain)
 
@@ -79,17 +87,20 @@ if __name__ == "__main__":
         chain = build_chain()
         query = "Does the Qur'an allow forcing someone to convert?"
         result = chain.invoke({"input": query})
-        print(result["answer"])
+        answer = result["answer"]
+        try:
+            parsed = json.loads(answer)
+            print(json.dumps(parsed, indent=2, ensure_ascii=False))
+        except json.JSONDecodeError:
+            print(answer)
     except Exception as exc:
         message = str(exc)
-        if "Failed to establish a new connection" in message or "localhost', port=11434" in message:
+        if "OPENAI_API_KEY" in message:
             raise SystemExit(
-                "Error: Could not connect to Ollama at http://localhost:11434. "
-                "Start Ollama, then run `ollama pull llama3.2` and retry."
+                "Error: OPENAI_API_KEY is not set in this terminal session."
             )
-        if "model" in message and "not found" in message.lower():
+        if "insufficient_quota" in message or "You exceeded your current quota" in message:
             raise SystemExit(
-                f"Error: Ollama model '{OLLAMA_MODEL}' is not available locally. "
-                f"Run `ollama pull {OLLAMA_MODEL}` and retry."
+                "Error: OpenAI quota exceeded. Check billing/usage and retry."
             )
         raise SystemExit(f"Error: {message}")

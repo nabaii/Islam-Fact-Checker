@@ -5,7 +5,7 @@
 This project has a two-stage Retrieval-Augmented Generation (RAG) pipeline for Qur'an-based claim checking:
 
 1. `ingestion.py` builds a local FAISS vector index from a Qur'an dataset.
-2. `rag_verdict.py` loads that index, retrieves relevant verses for a claim, and asks an Ollama LLM to produce a structured verdict.
+2. `rag_verdict.py` loads that index, retrieves relevant verses for a claim, and asks an OpenAI LLM to produce a structured verdict.
 
 In short:
 
@@ -126,7 +126,7 @@ Running `ingestion.py` creates `quran_vectorstore/` next to the script, containi
 
 ### Purpose
 
-`rag_verdict.py` loads the saved vector store, retrieves top-k relevant verse documents for a claim, sends context + claim to an Ollama chat model, and returns a JSON-formatted verdict.
+`rag_verdict.py` loads the saved vector store, retrieves top-k relevant verse documents for a claim, sends context + claim to an OpenAI chat model, and returns a JSON-formatted verdict.
 
 ### Imports and Dependency Strategy
 
@@ -134,7 +134,7 @@ Running `ingestion.py` creates `quran_vectorstore/` next to the script, containi
 - `FAISS`: load stored vector index.
 - `ChatPromptTemplate`: structured prompt building.
 - `HuggingFaceEmbeddings` with same fallback strategy as ingestion.
-- `ChatOllama` with fallback import path for compatibility.
+- `ChatOpenAI` from `langchain_openai`.
 - `create_retrieval_chain` and `create_stuff_documents_chain` from `langchain_classic`.
 
 Using the same embedding model as ingestion is critical; mismatch can degrade retrieval.
@@ -143,10 +143,10 @@ Using the same embedding model as ingestion is critical; mismatch can degrade re
 
 - `EMBEDDING_MODEL`: same multilingual model as ingestion.
 - `VECTORSTORE_DIR`: same directory path (`quran_vectorstore`).
-- `OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2")`
-  - Configurable LLM name; defaults to `llama3.2`.
-- `OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")`
-  - Configurable Ollama endpoint.
+- `OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")`
+  - Configurable OpenAI model name.
+- `OPENAI_API_KEY`
+  - Required environment variable for authentication.
 
 ### `SYSTEM_PROMPT`
 
@@ -170,22 +170,22 @@ This function composes the full RAG chain.
 #### Step-by-step
 
 1. Guard: if `VECTORSTORE_DIR` missing -> `FileNotFoundError` with guidance to run ingestion.
-2. Create embeddings object using same model.
-3. Load FAISS index:
+2. Guard: if `OPENAI_API_KEY` missing -> explicit environment error.
+3. Create embeddings object using same model.
+4. Load FAISS index:
    - `allow_dangerous_deserialization=True`
    - Intended only for trusted/local indices.
-4. Create retriever: `as_retriever(search_kwargs={"k": 5})`
+5. Create retriever: `as_retriever(search_kwargs={"k": 5})`
    - Retrieves top 5 semantically nearest documents.
-5. Build chat prompt messages:
+6. Build chat prompt messages:
    - system message = policy + format
    - human message = `Claim:\n{input}`
-6. Initialize Ollama chat model:
-   - `model=OLLAMA_MODEL`
-   - `base_url=OLLAMA_BASE_URL`
+7. Initialize OpenAI chat model:
+   - `model=OPENAI_MODEL`
    - `temperature=0` for deterministic responses.
-7. Build QA combine chain with `create_stuff_documents_chain`
+8. Build QA combine chain with `create_stuff_documents_chain`
    - "Stuff" means all retrieved docs are concatenated into prompt context.
-8. Return retrieval chain from `create_retrieval_chain(retriever, qa_chain)`.
+9. Return retrieval chain from `create_retrieval_chain(retriever, qa_chain)`.
 
 ### `__main__` Execution Block
 
@@ -201,10 +201,10 @@ Default behavior when run directly:
 
 The script traps common failures and gives actionable messages:
 
-- Cannot connect to Ollama at localhost:11434:
-  - advises starting Ollama and pulling `llama3.2`.
-- Requested model missing:
-  - advises `ollama pull <model>`.
+- `OPENAI_API_KEY` missing:
+  - advises setting the key in the active terminal session.
+- OpenAI quota exceeded:
+  - advises checking account billing/usage.
 - Any other exception:
   - re-raised as `SystemExit("Error: ...")`.
 
@@ -221,7 +221,7 @@ This produces clean CLI errors instead of noisy tracebacks.
 5. Claim query is embedded.
 6. Retriever fetches top 5 nearest verse documents.
 7. Retrieved text is inserted into strict system prompt context.
-8. Ollama model generates JSON verdict based only on provided context.
+8. OpenAI model generates JSON verdict based only on provided context.
 
 ---
 
@@ -243,7 +243,7 @@ If either model/path diverges, retrieval quality or loading behavior breaks.
 - Schema-aware ingestion with explicit validation.
 - Compatibility fallbacks for LangChain package changes.
 - Deterministic LLM setting (`temperature=0`) for stable outputs.
-- Explicit user-facing error messages for common local setup issues.
+- Explicit user-facing error messages for common OpenAI setup issues.
 
 ---
 
@@ -269,8 +269,8 @@ python rag_verdict.py
 Optional environment variables:
 
 ```powershell
-$env:OLLAMA_MODEL = "llama3.2"
-$env:OLLAMA_BASE_URL = "http://localhost:11434"
+$env:OPENAI_API_KEY = "sk-..."
+$env:OPENAI_MODEL = "gpt-4o-mini"
 python rag_verdict.py
 ```
 
@@ -279,5 +279,5 @@ python rag_verdict.py
 ## 9) Summary
 
 - `ingestion.py` builds the searchable Qur'an knowledge base.
-- `rag_verdict.py` retrieves relevant verses and asks a local Ollama model to produce a structured verdict.
-- Together they implement a local, evidence-constrained RAG verifier with clear operational boundaries.
+- `rag_verdict.py` retrieves relevant verses and asks an OpenAI model to produce a structured verdict.
+- Together they implement an evidence-constrained RAG verifier with clear operational boundaries.

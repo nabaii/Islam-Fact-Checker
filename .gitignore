@@ -1,0 +1,6 @@
+global.env
+.env
+__pycache__/
+*.pyc
+.claude/
+quran_vectorstore/
